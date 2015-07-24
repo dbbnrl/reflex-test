@@ -1,14 +1,19 @@
 {-# LANGUAGE RecursiveDo, ScopedTypeVariables, FlexibleContexts, TypeFamilies, ConstraintKinds, TemplateHaskell #-}
+import Data.Bool
 import Reflex.Dom
 
 main = mainWidget stuff
 
-flipflop e a b = 
+-- flipflop a b e = do
+--   tog <- toggle False e
+--   mapDyn (bool a b) tog
+
+flipflop a b e = toggle False e >>= mapDyn (bool a b)
 
 mybutton = do
     rec (bel, _) <- el' "button" $ dynText btext
         let clicked = domEvent Click bel
-        btext <- holdDyn "unclicked" $ tag (constant "Clicked!") clicked
+        btext <- flipflop "unclicked" "Clicked!" clicked
     return ()
 
 stuff = do
