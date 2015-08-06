@@ -32,7 +32,7 @@ counterButton = do
 newKey :: (_) => k -> Map k () -> Map k ()
 newKey k = Map.insert k ()
 
-mkButton v = mybutton
+mkButton k v = button $ show k
 
 bunchaButtons :: MonadWidget t m => m ()
 bunchaButtons = do
@@ -40,7 +40,7 @@ bunchaButtons = do
     let insertNew = fmap newKey cnt
     let bmanip = leftmost [ fmap newKey cnt ]
     buttonIn <- foldDyn ($) Map.empty bmanip
-    buttonOut <- list buttonIn mkButton
+    buttonOut <- listWithKey buttonIn mkButton
     return ()
 
 stuff :: MonadWidget t m => m ()
