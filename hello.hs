@@ -3,7 +3,7 @@ import Data.Bool
 import Reflex.Dom
 import Control.Monad (void)
 import qualified Data.Map.Strict as Map
-import Data.Map.Strict (Map, mapWithKey)
+import Data.Map.Strict (Map, mapWithKey, elems)
 import Data.Foldable (foldl')
 import Data.Monoid ((<>))
 import Data.ByteString (ByteString)
@@ -46,12 +46,12 @@ linkButton from to = do
   let clicks = domEvent Click bel
   return $ attachDyn from $ tagDyn to clicks
 
-mkNode :: (MonadWidget t m, _) => k -> Dynamic t [(Int, Bool)] -> m (Dynamic t (Int, Bool))
+mkNode :: (MonadWidget t m, _) => k -> Dynamic t (Map k (Int, Bool)) -> m (Dynamic t (Int, Bool))
 mkNode k ports = do
   levelIn <- forDyn ports $ (foldl' max 0) . fmap fst 
   levelOut <- mapDyn succ levelIn
   levelName <- mapDyn show levelIn
-  (portNames :: Dynamic t String) <- forDyn ports $ (intercalate ",") . (fmap (show . fst))
+  (portNames :: Dynamic t String) <- forDyn ports $ (intercalate ",") . elems . (fmap (show . fst))
   let constLabel = constDyn $ "I am #" <> show k <> " @"
   label <- mconcatDyn [constLabel, levelName, constDyn "\n", portNames]
   atRoot <- mapDyn (== 0) levelIn
@@ -79,7 +79,7 @@ bunchaButtons = do
   nodeOut <- listWithKey nodeIn mkNode
   return ()
   where
-    newKey k = Map.insert k []
+    newKey k = Map.insert k Map.empty
 
 stuff :: MonadWidget t m => m ()
 stuff = do
