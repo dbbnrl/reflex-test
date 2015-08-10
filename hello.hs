@@ -40,6 +40,12 @@ counterButton = do
   cnt <- count clicks
   return $ updated cnt
 
+linkButton :: MonadWidget t m => Dynamic t k -> Dynamic t k -> m (Event t (k, k))
+linkButton from to = do
+  (bel, _) <- el' "button" $ text "Link"
+  let clicks = domEvent Click bel
+  return $ attachDyn from $ tagDyn to clicks
+
 mkNode :: (MonadWidget t m, _) => k -> Dynamic t [(Int, Bool)] -> m (Dynamic t (Int, Bool))
 mkNode k ports = do
   levelIn <- forDyn ports $ (foldl' max 0) . fmap fst 
@@ -61,11 +67,12 @@ mkNode k ports = do
 
 bunchaButtons :: MonadWidget t m => m ()
 bunchaButtons = do
-  rec (cnt, from, to) <- divClass "control" $ do
+  rec (cnt, lnk) <- divClass "control" $ do
         c <- counterButton
         (Dropdown f _) <- dropdown 0 keyNames def
         (Dropdown t _)  <- dropdown 0 keyNames def
-        return (c, f, t)
+        l <- linkButton f t
+        return (c, l)
       let bmanip = leftmost [ fmap newKey cnt ]
       nodeIn <- foldDyn ($) Map.empty bmanip
       keyNames <- forDyn nodeIn $ (fmap show) . (mapWithKey const)
