@@ -40,18 +40,20 @@ counterButton = do
   cnt <- count clicks
   return $ updated cnt
 
-linkButton :: MonadWidget t m => Dynamic t k -> Dynamic t k -> m (Event t (k, k))
-linkButton from to = do
+linkButton :: MonadWidget t m => Dynamic t k -> Dynamic t (Map k (Dynamic t (Int, Bool))) -> m (Event t (k, (Map k (Dynamic t (Int, Bool)))))
+linkButton to newPort = do
   (bel, _) <- el' "button" $ text "Link"
   let clicks = domEvent Click bel
-  return $ attachDyn from $ tagDyn to clicks
+  return $ attachDyn to $ tagDyn newPort clicks
 
-mkNode :: (MonadWidget t m, _) => k -> Dynamic t (Map k (Int, Bool)) -> m (Dynamic t (Int, Bool))
-mkNode k ports = do
+mkNode :: (MonadWidget t m, _) => k -> Dynamic t (Map k (Dynamic t (Int, Bool))) -> m (Dynamic t (Int, Bool))
+mkNode k p = do
+  let ports = joinDynThroughMap p
   levelIn <- forDyn ports $ (foldl' max 0) . fmap fst 
   levelOut <- mapDyn succ levelIn
   levelName <- mapDyn show levelIn
-  (portNames :: Dynamic t String) <- forDyn ports $ (intercalate ",") . elems . (fmap (show . fst))
+  -- (portNames :: Dynamic t String) <- forDyn ports $ (intercalate ",") . elems . (fmap (show . fst))
+  (portNames :: Dynamic t String) <- forDyn ports $ (intercalate ",") . (fmap show) . Map.keys
   let constLabel = constDyn $ "I am #" <> show k <> " @"
   label <- mconcatDyn [constLabel, levelName, constDyn "\n", portNames]
   atRoot <- mapDyn (== 0) levelIn
@@ -67,19 +69,22 @@ mkNode k ports = do
 
 bunchaButtons :: MonadWidget t m => m ()
 bunchaButtons = do
-  rec (cnt, lnk) <- divClass "control" $ do
+  rec (cnt, newp) <- divClass "control" $ do
         c <- counterButton
-        (Dropdown f _) <- dropdown 0 keyNames def
-        (Dropdown t _)  <- dropdown 0 keyNames def
-        l <- linkButton f t
-        return (c, l)
-      let bmanip = leftmost [ fmap newKey cnt ]
-      nodeIn <- foldDyn ($) Map.empty bmanip
-      keyNames <- forDyn nodeIn $ (fmap show) . (mapWithKey const)
-  nodeOut <- listWithKey nodeIn mkNode
+        (Dropdown from _) <- dropdown 0 keyNames def
+        (Dropdown to _)  <- dropdown 0 keyNames def
+        newPort <- combineDyn getPort from nodeOut
+        p <- linkButton to newPort
+        return (c, p)
+      let bmanip = leftmost [ fmap newKey cnt, fmap addPort newp ]
+      (nodeIn :: Dynamic t (Map Int (Map Int (Dynamic t (Int, Bool))))) <- foldDyn ($) Map.empty bmanip
+      (nodeOut :: Dynamic t (Map Int (Dynamic t (Int, Bool)))) <- listWithKey nodeIn mkNode
+      keyNames <- forDyn nodeOut $ (fmap show) . (mapWithKey const)
   return ()
   where
     newKey k = Map.insert k Map.empty
+    getPort from m = maybe Map.empty (from =:) (Map.lookup from m)
+    addPort (to, p) = Map.adjust (p <>) to
 
 stuff :: MonadWidget t m => m ()
 stuff = do
