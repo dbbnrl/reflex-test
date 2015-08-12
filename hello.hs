@@ -52,10 +52,10 @@ mkNode k p = do
   levelIn <- forDyn ports $ (foldl' max 0) . fmap fst 
   levelOut <- mapDyn succ levelIn
   levelName <- mapDyn show levelIn
-  -- (portNames :: Dynamic t String) <- forDyn ports $ (intercalate ",") . elems . (fmap (show . fst))
   (portNames :: Dynamic t String) <- forDyn ports $ (intercalate ",") . (fmap show) . Map.keys
-  let constLabel = constDyn $ "I am #" <> show k <> " @"
-  label <- mconcatDyn [constLabel, levelName, constDyn "\n", portNames]
+  let constLabel = constDyn $ "I am #" <> show k <> " @Level "
+  label1 <- mconcatDyn [constLabel, levelName]
+  label2 <- mconcatDyn [constDyn "Sources: ", portNames]
   atRoot <- mapDyn (== 0) levelIn
   rootAttr <- forDyn atRoot (bool ("disabled" =: "true") Map.empty)
   stateIn <- mapDyn (and . fmap snd) ports
@@ -63,7 +63,8 @@ mkNode k p = do
       stateAttr <- forDyn stateOut (bool Map.empty ("class" =: "active"))
       nodeAttrs <- mconcatDyn [stateAttr, rootAttr]
       (bel, _) <- elDynAttr' "button" nodeAttrs $ do
-        dynText label
+        el "p" $ dynText label1
+        el "p" $ dynText label2
       clickToggle <- toggle False $ domEvent Click bel
   combineDyn (,) levelOut stateOut
 
