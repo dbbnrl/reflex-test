@@ -1,4 +1,4 @@
-{-# LANGUAGE RecursiveDo, ScopedTypeVariables, FlexibleContexts, TypeFamilies, ConstraintKinds, TemplateHaskell, PartialTypeSignatures, OverloadedStrings, BangPatterns #-}
+{-# LANGUAGE RecursiveDo, ScopedTypeVariables, FlexibleContexts, TypeFamilies, ConstraintKinds, TemplateHaskell, PartialTypeSignatures, OverloadedStrings, BangPatterns, RankNTypes #-}
 import Data.Bool
 import Reflex.Dom
 import Control.Monad (void)
@@ -12,35 +12,64 @@ import Data.List (intercalate)
 chooseDyn :: (_) => Dynamic t a -> Dynamic t a -> Dynamic t Bool -> m (Dynamic t a)
 chooseDyn x y b = joinDyn <$> mapDyn (bool x y) b
 
+-- Node contains the state of a node in the network.  At the moment it consists of
+-- the node's "level" in the DAG (longest chain from a node with no inputs to this node),
+-- and the current boolean output of this node.
 data Node = Node {nLevel :: !Int, nVal :: !Bool}
+
+-- A Port is a group of incoming edges to a node.  Each edge carries the current state
+-- of some other node.  Our value is the logical AND of our Port's values.
+-- Eventually the goal is to have multiple Ports, which are OR'ed together.
+type Port t = Map Int (Dynamic t Node)
 
 counterButton :: MonadWidget t m => m (Event t Int)
 counterButton = do
-  (bel, _) <- el' "button" $ text "New"
+  (bel, _) <- el' "button" $ text "Create Node"
   let clicks = domEvent Click bel
   cnt <- count clicks
   return $ updated cnt
 
-linkButton :: MonadWidget t m => Dynamic t k -> Dynamic t (Map k (Dynamic t Node)) -> m (Event t (k, (Map k (Dynamic t Node))))
+delButton :: MonadWidget t m => Dynamic t Int -> m (Event t Int)
+delButton which = do
+  (bel, _) <- el' "button" $ text "Delete Node:"
+  let clicks = domEvent Click bel
+  return $ tagDyn which clicks
+
+linkButton :: MonadWidget t m => Dynamic t Int -> Dynamic t (Port t) -> m (Event t (Int, (Port t)))
 linkButton to newPort = do
   (bel, _) <- el' "button" $ text "Link"
   let clicks = domEvent Click bel
   return $ attachDyn to $ tagDyn newPort clicks
 
-controlPanel :: (MonadWidget t m, _) => Dynamic t (Map k (Dynamic t Node)) -> m (Event t Int, Event t (k, (Map k (Dynamic t Node))))
+unlinkButton :: MonadWidget t m => Dynamic t Int -> Dynamic t Int -> m (Event t (Int, Int))
+unlinkButton to from = do
+  (bel, _) <- el' "button" $ text "Unlink"
+  let clicks = domEvent Click bel
+  return $ attachDyn to $ tagDyn from clicks
+
+controlPanel :: (MonadWidget t m) => Dynamic t (Map Int (Dynamic t Node))-> m (Event t Int, Event t Int, Event t (Int, (Port t)), Event t (Int, Int))
 controlPanel state = do
   keyNames <- forDyn state $ (fmap show) . (mapWithKey const)
   divClass "control" $ do
-    c <- counterButton
-    (Dropdown from _) <- dropdown 0 keyNames def
-    (Dropdown to _)  <- dropdown 0 keyNames def
-    newPort <- combineDyn getPort from state
-    p <- linkButton to newPort
-    return (c, p)
+    (c, d) <- divClass "node-control" $ do
+      c <- counterButton
+      d <- delButton which
+      (Dropdown which _) <- dropdown 0 keyNames def
+      return (c, d)
+    (l, u) <- divClass "link-control" $ do
+      text "From:"
+      (Dropdown from _) <- dropdown 0 keyNames def
+      text "To:"
+      (Dropdown to _)  <- dropdown 0 keyNames def
+      newPort <- combineDyn getPort from state
+      l <- linkButton to newPort
+      u <- unlinkButton to from
+      return (l, u)
+    return (c, d, l, u)
   where
     getPort from m = maybe Map.empty (from =:) (Map.lookup from m)
 
-mkNode :: (MonadWidget t m, _) => k -> Dynamic t (Map k (Dynamic t Node)) -> m (Dynamic t Node)
+mkNode :: (MonadWidget t m) => Int -> Dynamic t (Port t) -> m (Dynamic t Node)
 mkNode k s = do
   let sources = joinDynThroughMap s
   levelIn <- forDyn sources $ (foldl' max 0) . fmap nLevel 
@@ -64,14 +93,23 @@ mkNode k s = do
 
 network :: MonadWidget t m => m ()
 network = do
-  rec (newClicked, linkClicked) <- controlPanel stateOut
-      let stateManip = leftmost [ fmap newNode newClicked, fmap addPort linkClicked ]
-      (stateIn :: Dynamic t (Map Int (Map Int (Dynamic t Node)))) <- foldDyn ($) Map.empty stateManip
+  rec (newClicked, delClicked, linkClicked, unlinkClicked) <- controlPanel stateOut
+      -- leftmost should be fine since user can't click simultaneous buttons, right?
+      let stateManip = leftmost [ fmap newNode newClicked,
+                                  fmap delNode delClicked,
+                                  fmap addToPort linkClicked,
+                                  fmap delFromPort unlinkClicked ]
+      -- stateIn describes the network of links.  It is a Map from destination node IDs to Ports.
+      (stateIn :: Dynamic t (Map Int (Port t))) <- foldDyn ($) Map.empty stateManip
+      -- stateOut is the current state of each node.  It Maps from node ID to Node.
       (stateOut :: Dynamic t (Map Int (Dynamic t Node))) <- listWithKey stateIn mkNode
   return ()
   where
     newNode k = Map.insert k Map.empty
-    addPort (to, p) = Map.adjust (p <>) to
+    -- delNode is a bit ugly b/c we need to manually clean up all outgoing edges from the deleted node
+    delNode k = Map.mapMaybeWithKey (\k' p -> if (k == k') then Nothing else Just (Map.delete k p))
+    addToPort (to, p) = Map.adjust (p <>) to
+    delFromPort (to, from) = Map.adjust (Map.delete from) to
 
 body :: MonadWidget t m => m ()
 body = do
