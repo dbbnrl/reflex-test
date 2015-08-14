@@ -83,6 +83,8 @@ mkNode k p = do
       clickToggle <- toggle False $ domEvent Click bel
   allSources <- forDyn incoming $ (Set.insert k) . fold . fmap nSources
   levelOut <- mapDyn succ levelIn
+  -- I wish! :
+  -- Node <$> allSources <*> levelOut <*> stateOut
   iWantApplicative <- combineDyn Node allSources levelOut
   combineDyn ($) iWantApplicative stateOut
   where
