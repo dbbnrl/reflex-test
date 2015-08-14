@@ -5,18 +5,21 @@ import Reflex.Dom
 import Control.Monad (void)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map, elems, keys, lookup, insert, adjust, delete, mapWithKey, mapMaybeWithKey)
-import Data.Foldable (foldl')
+import Data.Foldable (foldl', fold)
 import Data.Monoid ((<>))
 import Data.ByteString (ByteString)
 import Data.List (intercalate)
+import qualified Data.Set as Set
+import Data.Set (Set, member)
 
 chooseDyn :: (_) => Dynamic t a -> Dynamic t a -> Dynamic t Bool -> m (Dynamic t a)
 chooseDyn x y b = joinDyn <$> mapDyn (bool x y) b
 
 -- Node contains the state of a node in the network.  At the moment it consists of
--- the node's "level" in the DAG (longest chain from a node with no inputs to this node),
--- and the current boolean output of this node.
-data Node = Node {nLevel :: !Int, nVal :: !Bool}
+-- the Set of nodes upstream of this node (for loop detection), the "level" of the
+-- node (maximum chain length from a node w/ no inputs to this node), and the current
+-- boolean output of this node.
+data Node = Node {nSources :: !(Set Int), nLevel :: !Int, nVal :: !Bool}
 
 -- A Port is a group of incoming edges to a node.  Each edge carries the current state
 -- of some other node.  Our value is the logical AND of our Port's values.
@@ -68,28 +71,35 @@ controlPanel ~(userFeedback, keyNames) = do
 
 -- Node widget.  Compute the node's state (and rendering) from its incoming edge values.
 mkNode :: (MonadWidget t m) => Int -> Dynamic t (Port t) -> m (Dynamic t Node)
-mkNode k s = do
-  let sources = joinDynThroughMap s   -- Collapse nested Dynamics to simplify
-  levelIn <- forDyn sources $ (foldl' max 0) . fmap nLevel 
-  levelOut <- mapDyn succ levelIn
-  offset <- mapDyn (*100) levelOut
-  levelName <- mapDyn show levelIn
-  sourceLabels <- forDyn sources $ (intercalate ",") . (fmap show) . keys
-  let constLabel = constDyn $ "I am #" <> show k <> " @Level "
-  label1 <- mconcatDyn [constLabel, levelName]
-  label2 <- mconcatDyn [constDyn "Sources: ", sourceLabels]
+mkNode k p = do
+  let incoming = joinDynThroughMap p   -- Collapse nested Dynamics to simplify
+  levelIn <- forDyn incoming $ (foldl' max 0) . fmap nLevel
   atRoot <- mapDyn (== 0) levelIn
-  rootAttr <- forDyn atRoot (bool ("disabled" =: "true") Map.empty)
-  topAttr <- forDyn offset (\x -> ("style" =: ("top:" <> show x <> "px")))
-  stateIn <- mapDyn (and . fmap nVal) sources  -- Actually compute our boolean state from inputs
+  stateIn <- mapDyn (and . fmap nVal) incoming  -- Actually compute our boolean state from inputs
   rec stateOut <- chooseDyn stateIn clickToggle atRoot
-      stateAttr <- forDyn stateOut (bool Map.empty ("class" =: "active"))
-      nodeAttrs <- mconcatDyn [stateAttr, rootAttr, topAttr]
-      (bel, _) <- elDynAttr' "button" nodeAttrs $ do
-        el "p" $ dynText label1
-        el "p" $ dynText label2
+      nodeAttrs <- makeAttrs levelIn atRoot stateOut
+      (bel, _) <- elDynAttr' "button" nodeAttrs $ makeText k incoming levelIn
       clickToggle <- toggle False $ domEvent Click bel
-  combineDyn Node levelOut stateOut
+  allSources <- forDyn incoming $ (Set.insert k) . fold . fmap nSources
+  levelOut <- mapDyn succ levelIn
+  iWantApplicative <- combineDyn Node allSources levelOut
+  combineDyn ($) iWantApplicative stateOut
+  where
+    makeAttrs levelIn atRoot stateOut = do
+      rootAttr <- forDyn atRoot (bool ("disabled" =: "true") Map.empty)
+      offset <- mapDyn (*100) levelIn
+      topAttr <- forDyn offset (\x -> ("style" =: ("top:" <> show x <> "px")))
+      stateAttr <- forDyn stateOut (bool Map.empty ("class" =: "active"))
+      mconcatDyn [stateAttr, rootAttr, topAttr]
+    makeText k incoming levelIn = do
+      let constLabel = constDyn $ "I am #" <> show k <> " @Level "
+      levelText <- mapDyn show levelIn
+      label1 <- mconcatDyn [constLabel, levelText]
+      sourceLabels <- forDyn incoming $ (intercalate " ^ ") . (fmap show) . keys
+      eqText <- forDyn incoming (\m -> if (null m) then "Click Me" else "= ")
+      label2 <- mconcatDyn [eqText, sourceLabels]
+      el "p" $ dynText label1
+      el "p" $ dynText label2
 
 -- mkNetwork creates the DAG and updates it in response to received events.
 -- The flow of data *within* the DAG is automatically handled by the fact that DAG edges
@@ -125,13 +135,13 @@ mkNetwork events = do
     addToPort nodeState (to, from) = do
       cs <- sample $ current nodeState  -- current state (contains Dynamics)
       js <- sample $ current $ joinDynThroughMap nodeState  -- current joined state (flat)
-      let levels = nLevel <$> js
+      let sources = nSources <$> js
           ~(Just n) = lookup from cs  -- Only used if lookup would succeed
           manip = adjust ((from =: n) <>) to
-          valid = (>=) <$> (lookup to levels) <*> (lookup from levels)  -- valid if to >= from
-      case valid of
-        Just True  -> return (manip, Right "")
-        Just False -> return (   id,  Left "No loops allowed!")
+          invalid = (member to) <$> (lookup from sources)  -- invalid if 'to' is upstream of 'from'
+      case invalid of
+        Just False -> return (manip, Right "")
+        Just True  -> return (   id,  Left "No loops allowed!")
         Nothing    -> return (   id, Right "")
     delFromPort (to, from) = (adjust (delete from) to,
                               Right "")
@@ -145,8 +155,8 @@ graphApp = do
   return ()
 
 myCss :: ByteString = "\
-  \.nodes button {position: relative; float: left}\
-  \.active {color: #00ff00;}\
+  \.nodes button {position: relative;}\
+  \.active button {color: #00ff00;}\
   \#feedback {color: green;}\
   \#feedback.error {color: red;}\
   \"
