@@ -159,7 +159,7 @@ graphApp = do
 
 myCss :: ByteString = "\
   \.nodes button {position: relative;}\
-  \.active button {color: #00ff00;}\
+  \button.active {color: #00ff00;}\
   \#feedback {color: green;}\
   \#feedback.error {color: red;}\
   \"
