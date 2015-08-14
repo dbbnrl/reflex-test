@@ -51,7 +51,8 @@ feedbackText fb = do
 -- Return 4 different event streams for (new node, delete node, new link, delete link)
 controlPanel :: MonadWidget t m => (Dynamic t (Either String String), Dynamic t (Map Int String)) ->
                                    m (Event t Int, Event t Int, Event t (Int, Int), Event t (Int, Int))
-controlPanel ~(userFeedback, keyNames) = do
+controlPanel feedback = do
+  let (userFeedback, keyNames) = feedback
   divClass "control" $ do
     (c, d) <- divClass "node-control" $ do
       c <- counterButton
